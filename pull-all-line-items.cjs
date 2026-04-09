@@ -85,7 +85,7 @@ async function main() {
   for (const [name, start, end] of periods) {
     let cursor = null, count = 0;
     while (true) {
-      const vars = { first: 3, inProductionAfter: start, inProductionBefore: end };
+      const vars = { first: 1, inProductionAfter: start, inProductionBefore: end };
       if (cursor) vars.after = cursor;
       let ok = false;
       for (let retry = 0; retry < 3 && !ok; retry++) {
