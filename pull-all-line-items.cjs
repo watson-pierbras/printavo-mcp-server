@@ -174,7 +174,7 @@ async function main() {
     const tags = (inv.tags || []).join('; ');
     const groups = inv.lineItemGroups?.nodes || [];
     for (const group of groups) {
-      const imprints = (group.imprints?.nodes || []).map(imp => imp.name).join('; ');
+      const imprints = (group.imprints?.nodes || []).map(imp => imp.id).join('; ');
       const items = group.lineItems?.nodes || [];
       for (const li of items) {
         totalLineItems++;
