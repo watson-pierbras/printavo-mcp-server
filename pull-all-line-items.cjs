@@ -78,30 +78,42 @@ async function main() {
   ];
 
   // --- RESUME SUPPORT ---
-  // Load previously saved progress if it exists
+  // Saves progress after every page. Tracks:
+  // - All pulled invoices (deduplicated by ID)
+  // - Completed months (skipped on restart)
+  // - Current month's cursor (resume mid-month)
   const PROGRESS_FILE = 'pull_progress.json';
   let all = [];
+  let seenIds = new Set();
   let completedMonths = new Set();
   let errors = [];
+  let resumeCursor = {}; // { monthName: lastCursor }
 
   if (fs.existsSync(PROGRESS_FILE)) {
     try {
       const saved = JSON.parse(fs.readFileSync(PROGRESS_FILE, 'utf8'));
       all = saved.invoices || [];
+      seenIds = new Set(all.map(inv => inv.id));
       completedMonths = new Set(saved.completedMonths || []);
+      resumeCursor = saved.resumeCursor || {};
       errors = saved.errors || [];
-      console.log(`Resuming: ${all.length} invoices already pulled from ${completedMonths.size} months (${[...completedMonths].join(', ')})`);
-      console.log(`Skipping completed months...\n`);
+      console.log(`Resuming: ${all.length} invoices (${seenIds.size} unique) from ${completedMonths.size} completed months`);
+      if (Object.keys(resumeCursor).length > 0) {
+        console.log(`Mid-month cursors: ${Object.entries(resumeCursor).map(([m,c]) => `${m}→page ${c.slice(0,8)}...`).join(', ')}`);
+      }
+      console.log();
     } catch (e) {
       console.log('Could not read progress file, starting fresh.\n');
     }
   }
 
-  // Save progress after each completed month
-  function saveProgress() {
+  function saveProgress(currentMonth, cursor) {
+    if (cursor) resumeCursor[currentMonth] = cursor;
+    else delete resumeCursor[currentMonth];
     fs.writeFileSync(PROGRESS_FILE, JSON.stringify({
       invoices: all,
       completedMonths: [...completedMonths],
+      resumeCursor,
       errors,
       savedAt: new Date().toISOString(),
     }));
@@ -115,7 +127,10 @@ async function main() {
       console.log(`${name}: SKIPPED (already pulled)`);
       continue;
     }
-    let cursor = null, count = 0;
+    // Resume mid-month if we have a cursor
+    let cursor = resumeCursor[name] || null;
+    let count = 0;
+    if (cursor) console.log(`${name}: Resuming from saved cursor...`);
     while (true) {
       const vars = { first: 1, inProductionAfter: start, inProductionBefore: end };
       if (cursor) vars.after = cursor;
@@ -125,7 +140,11 @@ async function main() {
           const data = await apiCall(QUERY, vars);
           const nodes = data.orders?.nodes || [];
           const pi = data.orders?.pageInfo || {};
-          for (const n of nodes) { if (n?.id) { all.push(n); count++; } }
+          for (const n of nodes) {
+            if (n?.id && !seenIds.has(n.id)) {
+              all.push(n); count++; seenIds.add(n.id);
+            }
+          }
           cursor = pi.hasNextPage ? pi.endCursor : null;
           ok = true; pages++;
         } catch (e) {
@@ -145,6 +164,8 @@ async function main() {
         }
       }
       if (!cursor) break;
+      // Save progress after every page (mid-month resume)
+      saveProgress(name, cursor);
       await sleep(800); // slightly slower to avoid triggering WAF
       if (pages % 50 === 0) {
         const elapsed = (Date.now() - t0) / 1000;
@@ -152,7 +173,7 @@ async function main() {
       }
     }
     completedMonths.add(name);
-    saveProgress();
+    saveProgress(name, null);
     console.log(`${name}: ${count} invoices (total: ${all.length}, ${Math.round((Date.now()-t0)/1000)}s) [saved]`);
   }
 
