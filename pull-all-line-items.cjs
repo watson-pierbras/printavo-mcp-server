@@ -33,7 +33,7 @@ const BATCH_QUERY = `query($first: Int, $after: String, $inProductionAfter: ISO8
         deliveryMethod { id name }
         shippingAddress { city state zipCode }
         lineItemGroups { nodes { id position
-          imprints { nodes { id name description } }
+          imprints { nodes { id } }
           lineItems { nodes {
             id description color itemNumber items price position taxed markupPercentage
             category { id name } product { id name } productStatus { id name }
