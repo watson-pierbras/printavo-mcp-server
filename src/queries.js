@@ -1,6 +1,17 @@
 // All GraphQL queries used by the Printavo MCP server.
 // READ-ONLY — no mutations.
-// Field names verified against Printavo API v2 documentation.
+// Field names verified against Printavo API v2 via schema introspection.
+// NOTE: Orders API returns Quote type nodes, not Invoice type.
+
+// Core Quote fragment — used across multiple queries
+const QUOTE_FIELDS = `
+  id visualId nickname total subtotal totalUntaxed totalQuantity
+  amountPaid amountOutstanding createdAt dueAt invoiceAt startAt
+  paidInFull productionNote tags
+  status { id name color }
+  contact { id fullName email }
+  owner { id email }
+`;
 
 export const SEARCH_INVOICES_QUERY = `
   query(
@@ -11,8 +22,6 @@ export const SEARCH_INVOICES_QUERY = `
     $statusIds: [ID!]
     $paymentStatus: OrderPaymentStatus
     $query: String
-    $sortOn: OrderSortField
-    $sortDescending: Boolean
   ) {
     orders(
       first: $first
@@ -22,34 +31,11 @@ export const SEARCH_INVOICES_QUERY = `
       statusIds: $statusIds
       paymentStatus: $paymentStatus
       query: $query
-      sortOn: $sortOn
-      sortDescending: $sortDescending
+      sortOn: VISUAL_ID
     ) {
       nodes {
-        ... on Invoice {
-          id
-          visualId
-          nickname
-          total
-          subtotal
-          totalUntaxed
-          totalQuantity
-          amountPaid
-          amountOutstanding
-          createdAt
-          dueAt
-          invoiceAt
-          startAt
-          paidInFull
-          productionNote
-          status { id name color }
-          contact {
-            id
-            fullName
-            email
-            customer { companyName }
-          }
-          owner { id email }
+        ... on Quote {
+          ${QUOTE_FIELDS}
         }
       }
       pageInfo { hasNextPage endCursor }
@@ -57,101 +43,98 @@ export const SEARCH_INVOICES_QUERY = `
   }
 `;
 
-export const GET_INVOICE_DETAIL_QUERY = `
-  query($id: ID!) {
-    invoice(id: $id) {
-      id
-      visualId
-      nickname
-      total
-      subtotal
-      totalUntaxed
-      totalQuantity
-      amountPaid
-      amountOutstanding
-      salesTax
-      salesTaxAmount
-      discount
-      discountAmount
-      discountAsPercentage
-      createdAt
-      dueAt
-      invoiceAt
-      customerDueAt
-      startAt
-      paidInFull
-      productionNote
-      customerNote
-      publicUrl
-      packingSlipUrl
-      status { id name color }
-      contact {
-        id
-        fullName
-        email
-        phone
-        customer { companyName }
-      }
-      owner { id email }
-      billingAddress {
-        address1
-        address2
-        city
-        state
-        zipCode
-        companyName
-        customerName
-      }
-      shippingAddress {
-        address1
-        address2
-        city
-        state
-        zipCode
-        companyName
-        customerName
-      }
-      lineItemGroups {
-        nodes {
-          id
-          title
-          lineItems {
+// For get_invoice_detail: search by visualId since invoice(id:) requires numeric IDs
+// We search orders and pull 1 result with full line item detail
+export const GET_ORDER_DETAIL_QUERY = `
+  query(
+    $first: Int
+    $query: String
+  ) {
+    orders(
+      first: $first
+      query: $query
+      sortOn: VISUAL_ID
+    ) {
+      nodes {
+        ... on Quote {
+          id visualId nickname total subtotal totalUntaxed totalQuantity
+          amountPaid amountOutstanding createdAt dueAt invoiceAt startAt
+          paidInFull productionNote customerNote tags merch
+          status { id name color }
+          contact { id fullName email }
+          owner { id email }
+          deliveryMethod { id name }
+          shippingAddress { address1 city state zipCode }
+          billingAddress { address1 city state zipCode }
+          lineItemGroups {
             nodes {
-              id
-              description
-              color
-              itemNumber
-              items
-              price
-              sizes {
-                sOther
-                sYxs
-                sYs
-                sYm
-                sYl
-                sYxl
-                sXs
-                sS
-                sM
-                sL
-                sXl
-                s2xl
-                s3xl
-                s4xl
-                s5xl
-                s6xl
+              id position
+              imprints { nodes { id typeOfWork { id name } details } }
+              lineItems {
+                nodes {
+                  id description color itemNumber items price position taxed markupPercentage
+                  category { id name }
+                  product { id description itemNumber brand color }
+                  sizes { size count }
+                }
               }
             }
           }
+          fees { nodes { id description amount taxed } }
         }
       }
+      pageInfo { hasNextPage endCursor }
     }
   }
 `;
 
-// Note: The customers query returns Customer objects.
-// Customer type has: id, companyName, internalNote, orderCount, primaryContact { fullName email phone }
-// The customers query does NOT have a query/search argument — pagination only.
+// Batch query with full line item detail — 3 orders per page to stay under complexity limit
+export const BATCH_DETAIL_QUERY = `
+  query(
+    $first: Int
+    $after: String
+    $inProductionAfter: ISO8601DateTime
+    $inProductionBefore: ISO8601DateTime
+  ) {
+    orders(
+      first: $first
+      after: $after
+      inProductionAfter: $inProductionAfter
+      inProductionBefore: $inProductionBefore
+      sortOn: VISUAL_ID
+    ) {
+      nodes {
+        ... on Quote {
+          id visualId nickname total subtotal totalUntaxed totalQuantity
+          amountPaid amountOutstanding createdAt dueAt invoiceAt startAt
+          paidInFull productionNote tags
+          status { id name }
+          contact { id fullName email }
+          owner { id email }
+          deliveryMethod { id name }
+          shippingAddress { city state zipCode }
+          lineItemGroups {
+            nodes {
+              id position
+              imprints { nodes { id typeOfWork { id name } details } }
+              lineItems {
+                nodes {
+                  id description color itemNumber items price position taxed markupPercentage
+                  category { id name }
+                  product { id description itemNumber brand color }
+                  sizes { size count }
+                }
+              }
+            }
+          }
+          fees { nodes { id description amount taxed } }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
 export const SEARCH_CUSTOMERS_QUERY = `
   query($first: Int, $after: String) {
     customers(first: $first, after: $after) {
@@ -161,52 +144,31 @@ export const SEARCH_CUSTOMERS_QUERY = `
         internalNote
         orderCount
         primaryContact {
-          id
-          fullName
-          firstName
-          lastName
-          email
-          phone
+          id fullName email phone
         }
       }
       pageInfo { hasNextPage endCursor }
       totalNodes
-      totalAmount
     }
   }
 `;
 
-// contact query: returns Contact type with customer relationship
 export const GET_CUSTOMER_DETAIL_QUERY = `
   query($id: ID!) {
     contact(id: $id) {
-      id
-      fullName
-      firstName
-      lastName
-      email
-      phone
-      orderCount
+      id fullName email phone
       customer {
-        id
-        companyName
-        internalNote
-        orderCount
+        id companyName internalNote orderCount
       }
     }
   }
 `;
 
-// Top-level statuses query (not nested under account)
 export const LIST_STATUSES_QUERY = `
   query {
     statuses {
       nodes {
-        id
-        name
-        color
-        position
-        type
+        id name color position type
       }
     }
   }
@@ -215,23 +177,13 @@ export const LIST_STATUSES_QUERY = `
 export const GET_ACCOUNT_INFO_QUERY = `
   query {
     account {
-      id
-      companyName
-      companyEmail
-      phone
-      website
-      address {
-        address1
-        address2
-        city
-        state
-        zipCode
-      }
+      id companyName companyEmail phone website
+      address { address1 address2 city state zipCode }
     }
   }
 `;
 
-// Reusable paginated orders query for stats and production schedule
+// Paginated orders for stats — lightweight, no line items
 export const ORDERS_PAGINATED_QUERY = `
   query(
     $first: Int
@@ -239,8 +191,6 @@ export const ORDERS_PAGINATED_QUERY = `
     $inProductionAfter: ISO8601DateTime
     $inProductionBefore: ISO8601DateTime
     $statusIds: [ID!]
-    $sortOn: OrderSortField
-    $sortDescending: Boolean
   ) {
     orders(
       first: $first
@@ -248,31 +198,21 @@ export const ORDERS_PAGINATED_QUERY = `
       inProductionAfter: $inProductionAfter
       inProductionBefore: $inProductionBefore
       statusIds: $statusIds
-      sortOn: $sortOn
-      sortDescending: $sortDescending
+      sortOn: VISUAL_ID
     ) {
       nodes {
-        ... on Invoice {
-          id
-          visualId
-          nickname
-          total
-          totalQuantity
-          amountPaid
-          amountOutstanding
-          paidInFull
-          dueAt
-          startAt
-          createdAt
+        ... on Quote {
+          id visualId nickname total totalQuantity
+          amountPaid amountOutstanding paidInFull
+          dueAt startAt createdAt
           status { id name color }
-          contact {
-            id
-            fullName
-            customer { companyName }
-          }
+          contact { id fullName }
         }
       }
       pageInfo { hasNextPage endCursor }
     }
   }
 `;
+
+// Raw query passthrough — for testing and advanced use
+export const RAW_QUERY = null; // handled dynamically in tools.js
