@@ -110,22 +110,32 @@ app.use((req, res, next) => {
 
 function mcpAuthMiddleware(req, res, next) {
   const apiKey = process.env.MCP_API_KEY;
-  const authHeader = req.headers['authorization'] || '';
 
-  if (!authHeader.startsWith('Bearer ')) {
+  // Accept API key from multiple header formats:
+  // 1. Authorization: Bearer <key>
+  // 2. x-api-key: <key>
+  // 3. Authorization: <key> (without Bearer prefix)
+  const authHeader = req.headers['authorization'] || '';
+  const xApiKey = req.headers['x-api-key'] || '';
+
+  let token = null;
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  } else if (xApiKey) {
+    token = xApiKey.trim();
+  } else if (authHeader) {
+    token = authHeader.trim();
+  }
+
+  if (!token) {
     res.status(401).json({
       jsonrpc: '2.0',
-      error: {
-        code: -32001,
-        message:
-          'Unauthorized: Missing Authorization header. Expected: Bearer <MCP_API_KEY>',
-      },
+      error: { code: -32001, message: 'Unauthorized: Missing API key.' },
       id: null,
     });
     return;
   }
 
-  const token = authHeader.slice(7).trim();
   if (token !== apiKey) {
     res.status(401).json({
       jsonrpc: '2.0',
@@ -196,12 +206,14 @@ app.post('/mcp', mcpAuthMiddleware, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.get('/mcp', mcpAuthMiddleware, (req, res) => {
-  res.status(405).json({
+  // Return 200 with server info for endpoint validation
+  res.status(200).json({
     jsonrpc: '2.0',
-    error: {
-      code: -32000,
-      message:
-        'Method Not Allowed: SSE notifications are not supported in stateless mode.',
+    result: {
+      name: 'printavo-mcp',
+      version: '1.0.0',
+      status: 'ok',
+      message: 'MCP endpoint active. Use POST for tool calls.',
     },
     id: null,
   });
