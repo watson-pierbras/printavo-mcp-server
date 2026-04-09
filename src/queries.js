@@ -80,7 +80,7 @@ export const GET_ORDER_DETAIL_QUERY = `
               }
             }
           }
-          fees { nodes { id description amount taxed } }
+          fees { nodes { id description amount } }
         }
       }
       pageInfo { hasNextPage endCursor }
@@ -127,7 +127,7 @@ export const BATCH_DETAIL_QUERY = `
               }
             }
           }
-          fees { nodes { id description amount taxed } }
+          fees { nodes { id description amount } }
         }
       }
       pageInfo { hasNextPage endCursor }
