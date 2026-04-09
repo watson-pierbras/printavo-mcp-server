@@ -23,13 +23,13 @@ const QUERY = `query($first: Int, $after: String, $inProductionAfter: ISO8601Dat
         lineItemGroups { nodes { id position
           imprints { nodes { id details typeOfWork { id name } } }
           lineItems { nodes {
-            id description color itemNumber items price position taxed markupPercentage
+            id description color itemNumber items price position
             category { id name }
             product { id description itemNumber brand color }
             sizes { size count }
           } }
         } }
-        fees { nodes { id description amount taxed } }
+        fees { nodes { id description amount } }
       }
     }
     pageInfo { hasNextPage endCursor }
