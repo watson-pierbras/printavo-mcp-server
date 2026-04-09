@@ -9,28 +9,28 @@ const EMAIL = process.env.PRINTAVO_EMAIL;
 const TOKEN = process.env.PRINTAVO_API_TOKEN;
 if (!EMAIL || !TOKEN) { console.error('Missing env vars'); process.exit(1); }
 
+// Use a fragment string to avoid duplication
+const FIELDS = `
+  id visualId nickname total totalQuantity amountPaid
+  createdAt dueAt paidInFull productionNote tags
+  status { id name } contact { id fullName email } owner { id email }
+  lineItemGroups { nodes { id
+    lineItems { nodes {
+      id description color itemNumber items price
+      category { id name }
+      product { id description itemNumber brand color }
+      sizes { size count }
+    } }
+  } }
+  fees { nodes { id description amount } }
+`;
+
 const QUERY = `query($first: Int, $after: String, $inProductionAfter: ISO8601DateTime, $inProductionBefore: ISO8601DateTime) {
   orders(first: $first, after: $after, inProductionAfter: $inProductionAfter, inProductionBefore: $inProductionBefore, sortOn: VISUAL_ID) {
     nodes {
-      ... on Quote {
-        id visualId nickname total subtotal totalUntaxed totalQuantity amountPaid amountOutstanding
-        salesTax salesTaxAmount discount discountAmount
-        createdAt dueAt invoiceAt startAt paidInFull
-        productionNote customerNote tags merch
-        status { id name } contact { id fullName email } owner { id email }
-        deliveryMethod { id name }
-        shippingAddress { city state zipCode }
-        lineItemGroups { nodes { id position
-          imprints { nodes { id details typeOfWork { id name } } }
-          lineItems { nodes {
-            id description color itemNumber items price position
-            category { id name }
-            product { id description itemNumber brand color }
-            sizes { size count }
-          } }
-        } }
-        fees { nodes { id description amount } }
-      }
+      __typename
+      ... on Quote { ${FIELDS} }
+      ... on Invoice { ${FIELDS} }
     }
     pageInfo { hasNextPage endCursor }
   }
@@ -118,12 +118,12 @@ async function main() {
 
   // LINE ITEMS CSV
   const hdr = [
-    'invoice_id','visual_id','nickname','invoice_total','invoice_qty','invoice_paid_full',
+    'type','invoice_id','visual_id','nickname','invoice_total','invoice_qty','invoice_paid_full',
     'invoice_created','invoice_due','invoice_status','invoice_tags',
     'customer_name','customer_email','owner_email','production_note',
-    'group_id','group_position','imprint_type_of_work','imprint_details',
+    'group_id',
     'line_item_id','item_number','description','color','quantity','price_each','line_total',
-    'taxed','markup_pct','category_name',
+    'category_name',
     'product_item_number','product_description','product_brand','product_color',
     'size_other','size_yxs','size_ys','size_ym','size_yl','size_yxl',
     'size_xs','size_s','size_m','size_l','size_xl',
@@ -135,21 +135,18 @@ async function main() {
   for (const inv of all) {
     const tags = (inv.tags || []).join('; ');
     for (const g of (inv.lineItemGroups?.nodes || [])) {
-      const imps = (g.imprints?.nodes || []);
-      const impWork = imps.map(i => i.typeOfWork?.name || '').filter(Boolean).join('; ');
-      const impDetails = imps.map(i => i.details || '').filter(Boolean).join('; ');
       for (const li of (g.lineItems?.nodes || [])) {
         liTotal++;
         const sm = {};
         for (const s of (li.sizes || [])) sm[(s.size||'').toLowerCase()] = s.count || 0;
         const prod = li.product || {};
         rows.push([
-          inv.id, inv.visualId, inv.nickname, inv.total, inv.totalQuantity, inv.paidInFull,
+          inv.__typename, inv.id, inv.visualId, inv.nickname, inv.total, inv.totalQuantity, inv.paidInFull,
           inv.createdAt, inv.dueAt, inv.status?.name, tags,
           inv.contact?.fullName, inv.contact?.email, inv.owner?.email, inv.productionNote,
-          g.id, g.position, impWork, impDetails,
+          g.id,
           li.id, li.itemNumber, li.description, li.color, li.items, li.price,
-          (li.items||0)*(li.price||0), li.taxed, li.markupPercentage, li.category?.name,
+          (li.items||0)*(li.price||0), li.category?.name,
           prod.itemNumber, prod.description, prod.brand, prod.color,
           sm['other']||0, sm['yxs']||0, sm['ys']||0, sm['ym']||0, sm['yl']||0, sm['yxl']||0,
           sm['xs']||0, sm['s']||0, sm['m']||0, sm['l']||0, sm['xl']||0,
@@ -162,25 +159,23 @@ async function main() {
   console.log(`Saved line_items.csv (${liTotal} line items)`);
 
   // INVOICE SUMMARY CSV
-  const ih = ['invoice_id','visual_id','nickname','total','subtotal','total_untaxed',
-    'total_quantity','amount_paid','amount_outstanding','sales_tax_amount','discount_amount',
-    'paid_in_full','created_at','due_at','invoice_at','start_at','status','tags',
-    'customer_name','customer_email','owner_email','production_note','delivery_method','merch',
-    'line_item_count','group_count','fee_count','total_fees','ship_city','ship_state'];
+  const ih = ['type','invoice_id','visual_id','nickname','total',
+    'total_quantity','amount_paid','paid_in_full',
+    'created_at','due_at','status','tags',
+    'customer_name','customer_email','owner_email','production_note',
+    'line_item_count','group_count','fee_count','total_fees'];
   const ir = [ih.join(',')];
   for (const inv of all) {
     const gs = inv.lineItemGroups?.nodes || [];
     let lic = 0; for (const g of gs) lic += (g.lineItems?.nodes||[]).length;
     const fees = inv.fees?.nodes || [];
     ir.push([
-      inv.id, inv.visualId, inv.nickname, inv.total, inv.subtotal, inv.totalUntaxed,
-      inv.totalQuantity, inv.amountPaid, inv.amountOutstanding,
-      inv.salesTaxAmount, inv.discountAmount, inv.paidInFull,
-      inv.createdAt, inv.dueAt, inv.invoiceAt, inv.startAt,
+      inv.__typename, inv.id, inv.visualId, inv.nickname, inv.total,
+      inv.totalQuantity, inv.amountPaid, inv.paidInFull,
+      inv.createdAt, inv.dueAt,
       inv.status?.name, (inv.tags||[]).join('; '), inv.contact?.fullName, inv.contact?.email,
-      inv.owner?.email, inv.productionNote, inv.deliveryMethod?.name, inv.merch,
-      lic, gs.length, fees.length, fees.reduce((s,f)=>s+(f.amount||0),0),
-      inv.shippingAddress?.city, inv.shippingAddress?.state
+      inv.owner?.email, inv.productionNote,
+      lic, gs.length, fees.length, fees.reduce((s,f)=>s+(f.amount||0),0)
     ].map(escCsv).join(','));
   }
   fs.writeFileSync('invoices_summary.csv', ir.join('\n'));
