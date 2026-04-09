@@ -77,12 +77,44 @@ async function main() {
     ['Nov', '2025-11-01', '2025-11-30'], ['Dec', '2025-12-01', '2025-12-31'],
   ];
 
-  const all = [];
-  const errors = [];
+  // --- RESUME SUPPORT ---
+  // Load previously saved progress if it exists
+  const PROGRESS_FILE = 'pull_progress.json';
+  let all = [];
+  let completedMonths = new Set();
+  let errors = [];
+
+  if (fs.existsSync(PROGRESS_FILE)) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(PROGRESS_FILE, 'utf8'));
+      all = saved.invoices || [];
+      completedMonths = new Set(saved.completedMonths || []);
+      errors = saved.errors || [];
+      console.log(`Resuming: ${all.length} invoices already pulled from ${completedMonths.size} months (${[...completedMonths].join(', ')})`);
+      console.log(`Skipping completed months...\n`);
+    } catch (e) {
+      console.log('Could not read progress file, starting fresh.\n');
+    }
+  }
+
+  // Save progress after each completed month
+  function saveProgress() {
+    fs.writeFileSync(PROGRESS_FILE, JSON.stringify({
+      invoices: all,
+      completedMonths: [...completedMonths],
+      errors,
+      savedAt: new Date().toISOString(),
+    }));
+  }
+
   const t0 = Date.now();
   let pages = 0;
 
   for (const [name, start, end] of periods) {
+    if (completedMonths.has(name)) {
+      console.log(`${name}: SKIPPED (already pulled)`);
+      continue;
+    }
     let cursor = null, count = 0;
     while (true) {
       const vars = { first: 1, inProductionAfter: start, inProductionBefore: end };
@@ -119,7 +151,9 @@ async function main() {
         console.log(`  ...${all.length} invoices, ${pages} pages, ${Math.round(elapsed)}s`);
       }
     }
-    console.log(`${name}: ${count} invoices (total: ${all.length}, ${Math.round((Date.now()-t0)/1000)}s)`);
+    completedMonths.add(name);
+    saveProgress();
+    console.log(`${name}: ${count} invoices (total: ${all.length}, ${Math.round((Date.now()-t0)/1000)}s) [saved]`);
   }
 
   console.log(`\nDone: ${all.length} invoices in ${Math.round((Date.now()-t0)/1000)}s (${errors.length} errors)\n`);
