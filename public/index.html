@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Printavo MCP Server</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e0e0e0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .container { max-width: 640px; padding: 2rem; }
+  h1 { font-size: 1.5rem; font-weight: 600; color: #fff; margin-bottom: 0.5rem; }
+  .badge { display: inline-block; background: #01696f; color: #fff; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; margin-left: 8px; }
+  p { color: #888; line-height: 1.6; margin-top: 1rem; }
+  .tools { margin-top: 1.5rem; }
+  .tool { background: #1a1d27; border: 1px solid #2a2d37; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
+  .tool-name { font-family: 'SF Mono', 'Fira Code', monospace; color: #01696f; font-size: 0.875rem; }
+  .tool-desc { color: #888; font-size: 0.8rem; margin-top: 4px; }
+  .endpoint { margin-top: 1.5rem; background: #1a1d27; border: 1px solid #2a2d37; border-radius: 8px; padding: 1rem; font-family: monospace; font-size: 0.875rem; color: #01696f; }
+  .note { margin-top: 1rem; font-size: 0.8rem; color: #666; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Printavo MCP Server <span class="badge">READ-ONLY</span></h1>
+  <p>Model Context Protocol server for Printavo print shop management. Connect this to Perplexity as a custom remote connector to query your Printavo data.</p>
+  
+  <div class="tools">
+    <div class="tool"><span class="tool-name">search_invoices</span><div class="tool-desc">Search invoices by date, status, payment, keyword</div></div>
+    <div class="tool"><span class="tool-name">get_invoice_detail</span><div class="tool-desc">Full invoice with line items, sizes, pricing</div></div>
+    <div class="tool"><span class="tool-name">search_customers</span><div class="tool-desc">Search and browse customers</div></div>
+    <div class="tool"><span class="tool-name">get_customer_detail</span><div class="tool-desc">Customer details and contact info</div></div>
+    <div class="tool"><span class="tool-name">list_statuses</span><div class="tool-desc">All order status definitions</div></div>
+    <div class="tool"><span class="tool-name">get_order_stats</span><div class="tool-desc">Aggregated stats for a date range</div></div>
+    <div class="tool"><span class="tool-name">get_production_schedule</span><div class="tool-desc">Orders in production pipeline</div></div>
+    <div class="tool"><span class="tool-name">get_account_info</span><div class="tool-desc">Account details and configuration</div></div>
+  </div>
+  
+  <div class="endpoint">MCP Endpoint: __PORT_5000__/mcp</div>
+  <p class="note">Authenticated via Bearer token. No write operations are exposed.</p>
+</div>
+</body>
+</html>
