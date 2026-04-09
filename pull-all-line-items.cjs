@@ -88,7 +88,7 @@ async function main() {
       const vars = { first: 1, inProductionAfter: start, inProductionBefore: end };
       if (cursor) vars.after = cursor;
       let ok = false;
-      for (let retry = 0; retry < 3 && !ok; retry++) {
+      for (let retry = 0; retry < 10 && !ok; retry++) {
         try {
           const data = await apiCall(QUERY, vars);
           const nodes = data.orders?.nodes || [];
@@ -97,12 +97,23 @@ async function main() {
           cursor = pi.hasNextPage ? pi.endCursor : null;
           ok = true; pages++;
         } catch (e) {
-          if (retry < 2) await sleep(3000);
-          else { errors.push({ period: name, error: e.message }); cursor = null; }
+          const isRateLimit = e.message.includes('403') || e.message.includes('429') || e.message.includes('Incapsula') || e.message.includes('rate');
+          if (isRateLimit) {
+            const waitSec = 30 * (retry + 1); // 30s, 60s, 90s, ... up to 300s
+            console.log(`  ⏳ Rate limited (attempt ${retry + 1}/10). Waiting ${waitSec}s...`);
+            await sleep(waitSec * 1000);
+          } else if (retry < 9) {
+            console.log(`  ⚠️ Error (attempt ${retry + 1}/10): ${e.message.slice(0, 100)}. Retrying in 5s...`);
+            await sleep(5000);
+          } else {
+            errors.push({ period: name, cursor, error: e.message });
+            console.log(`  ❌ Failed after 10 attempts: ${e.message.slice(0, 100)}. Skipping to next month.`);
+            cursor = null;
+          }
         }
       }
       if (!cursor) break;
-      await sleep(600);
+      await sleep(800); // slightly slower to avoid triggering WAF
       if (pages % 50 === 0) {
         const elapsed = (Date.now() - t0) / 1000;
         console.log(`  ...${all.length} invoices, ${pages} pages, ${Math.round(elapsed)}s`);
