@@ -1,5 +1,4 @@
-// All GraphQL queries used by the Printavo MCP server.
-// READ-ONLY — no mutations.
+// All GraphQL queries and mutations used by the Printavo MCP server.
 // Field names verified against Printavo API v2 via schema introspection.
 // NOTE: Orders API returns Quote type nodes, not Invoice type.
 
@@ -216,3 +215,64 @@ export const ORDERS_PAGINATED_QUERY = `
 
 // Raw query passthrough — for testing and advanced use
 export const RAW_QUERY = null; // handled dynamically in tools.js
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+// lineItemCreate — add a new line item to an existing line item group
+// Uses LineItemCreateInput (position is required).
+// sizes uses LineItemSizeCountInput: { size: LineItemSize!, count: Int }
+export const LINE_ITEM_CREATE_MUTATION = `
+  mutation(
+    $lineItemGroupId: ID!
+    $input: LineItemCreateInput!
+  ) {
+    lineItemCreate(
+      lineItemGroupId: $lineItemGroupId
+      input: $input
+    ) {
+      id
+      description
+      color
+      itemNumber
+      items
+      price
+      position
+      taxed
+      sizes { size count }
+      lineItemGroup {
+        id
+        title
+      }
+    }
+  }
+`;
+
+// lineItemUpdate — update an existing line item
+// Uses LineItemInput (position is required).
+export const LINE_ITEM_UPDATE_MUTATION = `
+  mutation(
+    $id: ID!
+    $input: LineItemInput!
+  ) {
+    lineItemUpdate(
+      id: $id
+      input: $input
+    ) {
+      id
+      description
+      color
+      itemNumber
+      items
+      price
+      position
+      taxed
+      sizes { size count }
+      lineItemGroup {
+        id
+        title
+      }
+    }
+  }
+`;

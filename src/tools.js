@@ -1,6 +1,6 @@
 /**
- * MCP tool definitions and handlers for the Printavo read-only connector.
- * ALL tools are read-only. No mutations.
+ * MCP tool definitions and handlers for the Printavo connector.
+ * Includes read-only queries and line item mutations.
  * Field names verified against Printavo API v2 via schema introspection.
  * NOTE: orders query returns Quote type nodes, not Invoice.
  */
@@ -14,6 +14,8 @@ import {
   LIST_STATUSES_QUERY,
   GET_ACCOUNT_INFO_QUERY,
   ORDERS_PAGINATED_QUERY,
+  LINE_ITEM_CREATE_MUTATION,
+  LINE_ITEM_UPDATE_MUTATION,
 } from './queries.js';
 
 function formatCurrency(value) {
@@ -121,6 +123,59 @@ export const toolDefinitions = [
     name: 'get_account_info',
     description: 'Read-only. Get basic Printavo account information.',
     inputSchema: { type: 'object', properties: {} },
+  },
+
+  // -------------------------------------------------------------------------
+  // Mutation tools — line items
+  // -------------------------------------------------------------------------
+
+  {
+    name: 'add_line_item',
+    description: 'MUTATION. Add a new line item to an existing line item group on an invoice. Requires the line item group ID (get it from get_invoice_detail). Returns the created line item with its new ID.',
+    inputSchema: {
+      type: 'object',
+      required: ['line_item_group_id', 'description', 'position'],
+      properties: {
+        line_item_group_id: { type: 'string', description: 'The ID of the line item group to add this line item to. Get this from get_invoice_detail.' },
+        description: { type: 'string', description: 'Style description (e.g. "Gildan 5000 Heavy Cotton Tee").' },
+        item_number: { type: 'string', description: 'Item/style number (e.g. "G5000").' },
+        color: { type: 'string', description: 'Color of the item (e.g. "Black").' },
+        price: { type: 'number', description: 'Price per item in dollars.' },
+        position: { type: 'number', description: 'Position/order of this line item within the group (1-based).' },
+        taxed: { type: 'boolean', description: 'Whether this line item is taxable. Defaults to true.' },
+        sizes: { type: 'object', description: 'Size quantities as key-value pairs. Keys: YXS, YS, YM, YL, YXL, XS, S, M, L, XL, 2XL, 3XL, 4XL, 5XL, 6XL, OTHER, 6M, 12M, 18M, 24M, 2T, 3T, 4T, 5T. Values: integer counts. Example: { "S": 5, "M": 10, "L": 8 }' },
+      },
+    },
+  },
+  {
+    name: 'update_line_item',
+    description: 'MUTATION. Update an existing line item on an invoice. Can change description, item number, color, price, position, and/or taxed status. Use update_line_item_sizes to change size quantities.',
+    inputSchema: {
+      type: 'object',
+      required: ['id', 'position'],
+      properties: {
+        id: { type: 'string', description: 'The ID of the line item to update. Get this from get_invoice_detail.' },
+        description: { type: 'string', description: 'New style description.' },
+        item_number: { type: 'string', description: 'New item/style number.' },
+        color: { type: 'string', description: 'New color.' },
+        price: { type: 'number', description: 'New price per item in dollars.' },
+        position: { type: 'number', description: 'Position of this line item within the group (1-based). Required by the API.' },
+        taxed: { type: 'boolean', description: 'Whether this line item is taxable.' },
+      },
+    },
+  },
+  {
+    name: 'update_line_item_sizes',
+    description: 'MUTATION. Update the size quantities for an existing line item. Replaces all sizes with the provided values. Any size not included will be set to 0.',
+    inputSchema: {
+      type: 'object',
+      required: ['id', 'position', 'sizes'],
+      properties: {
+        id: { type: 'string', description: 'The ID of the line item to update sizes for. Get this from get_invoice_detail.' },
+        position: { type: 'number', description: 'Current position of the line item (required by the API). Get this from get_invoice_detail.' },
+        sizes: { type: 'object', description: 'Size quantities as key-value pairs. Keys: YXS, YS, YM, YL, YXL, XS, S, M, L, XL, 2XL, 3XL, 4XL, 5XL, 6XL, OTHER, 6M, 12M, 18M, 24M, 2T, 3T, 4T, 5T. Values: integer counts. Example: { "S": 5, "M": 10, "L": 8, "XL": 3 }' },
+      },
+    },
   },
 ];
 
@@ -355,6 +410,122 @@ async function handleGetAccountInfo() {
 }
 
 // ---------------------------------------------------------------------------
+// Mutation helpers
+// ---------------------------------------------------------------------------
+
+/** Map friendly size names to Printavo LineItemSize enum values. */
+const SIZE_NAME_TO_ENUM = {
+  'YXS': 'size_yxs', 'yxs': 'size_yxs',
+  'YS': 'size_ys', 'ys': 'size_ys',
+  'YM': 'size_ym', 'ym': 'size_ym',
+  'YL': 'size_yl', 'yl': 'size_yl',
+  'YXL': 'size_yxl', 'yxl': 'size_yxl',
+  'XS': 'size_xs', 'xs': 'size_xs',
+  'S': 'size_s', 's': 'size_s',
+  'M': 'size_m', 'm': 'size_m',
+  'L': 'size_l', 'l': 'size_l',
+  'XL': 'size_xl', 'xl': 'size_xl',
+  '2XL': 'size_2xl', '2xl': 'size_2xl', 'XXL': 'size_2xl', 'xxl': 'size_2xl',
+  '3XL': 'size_3xl', '3xl': 'size_3xl', 'XXXL': 'size_3xl',
+  '4XL': 'size_4xl', '4xl': 'size_4xl',
+  '5XL': 'size_5xl', '5xl': 'size_5xl',
+  '6XL': 'size_6xl', '6xl': 'size_6xl',
+  'OTHER': 'size_other', 'other': 'size_other', 'Other': 'size_other',
+  '6M': 'size_6m', '6m': 'size_6m',
+  '12M': 'size_12m', '12m': 'size_12m',
+  '18M': 'size_18m', '18m': 'size_18m',
+  '24M': 'size_24m', '24m': 'size_24m',
+  '2T': 'size_2t', '2t': 'size_2t',
+  '3T': 'size_3t', '3t': 'size_3t',
+  '4T': 'size_4t', '4t': 'size_4t',
+  '5T': 'size_5t', '5t': 'size_5t',
+};
+const VALID_ENUM_VALUES = new Set(Object.values(SIZE_NAME_TO_ENUM));
+
+function parseSizesToInput(sizes) {
+  if (!sizes || typeof sizes !== 'object') return [];
+  const result = [];
+  for (const [key, count] of Object.entries(sizes)) {
+    const intCount = parseInt(count);
+    if (isNaN(intCount) || intCount < 0) continue;
+    let enumValue = SIZE_NAME_TO_ENUM[key];
+    if (!enumValue && VALID_ENUM_VALUES.has(key)) enumValue = key;
+    if (!enumValue) {
+      throw new Error(`Unknown size: "${key}". Valid: YXS, YS, YM, YL, YXL, XS, S, M, L, XL, 2XL, 3XL, 4XL, 5XL, 6XL, OTHER, 6M, 12M, 18M, 24M, 2T, 3T, 4T, 5T`);
+    }
+    result.push({ size: enumValue, count: intCount });
+  }
+  return result;
+}
+
+function formatMutationResult(item, action) {
+  const lines = [`\u2705 Line item ${action} successfully.`, '', `ID: ${item.id}`];
+  if (item.description) lines.push(`Description: ${item.description}`);
+  if (item.itemNumber) lines.push(`Item #: ${item.itemNumber}`);
+  if (item.color) lines.push(`Color: ${item.color}`);
+  if (item.price != null) lines.push(`Price: ${formatCurrency(item.price)}`);
+  lines.push(`Total Qty: ${item.items ?? 'N/A'}`);
+  lines.push(`Position: ${item.position}`);
+  lines.push(`Taxed: ${item.taxed ? 'Yes' : 'No'}`);
+  const sizeStr = formatSizes(item.sizes);
+  if (sizeStr) lines.push(`Sizes: ${sizeStr}`);
+  if (item.lineItemGroup) {
+    lines.push(`Group: ${item.lineItemGroup.title || '(Untitled)'} (ID: ${item.lineItemGroup.id})`);
+  }
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Mutation handlers
+// ---------------------------------------------------------------------------
+
+async function handleAddLineItem(args) {
+  const { line_item_group_id, description, item_number, color, price, position, taxed, sizes } = args || {};
+  if (!line_item_group_id) throw new Error('`line_item_group_id` is required');
+  if (!description) throw new Error('`description` is required');
+  if (position == null) throw new Error('`position` is required');
+
+  const input = { description, position: parseInt(position) };
+  if (item_number != null) input.itemNumber = item_number;
+  if (color != null) input.color = color;
+  if (price != null) input.price = parseFloat(price);
+  if (taxed != null) input.taxed = taxed;
+  if (sizes) input.sizes = parseSizesToInput(sizes);
+
+  const data = await executeQuery(LINE_ITEM_CREATE_MUTATION, { lineItemGroupId: line_item_group_id, input });
+  return formatMutationResult(data.lineItemCreate, 'created');
+}
+
+async function handleUpdateLineItem(args) {
+  const { id, description, item_number, color, price, position, taxed } = args || {};
+  if (!id) throw new Error('`id` is required');
+  if (position == null) throw new Error('`position` is required');
+
+  const input = { position: parseInt(position) };
+  if (description != null) input.description = description;
+  if (item_number != null) input.itemNumber = item_number;
+  if (color != null) input.color = color;
+  if (price != null) input.price = parseFloat(price);
+  if (taxed != null) input.taxed = taxed;
+
+  const data = await executeQuery(LINE_ITEM_UPDATE_MUTATION, { id, input });
+  return formatMutationResult(data.lineItemUpdate, 'updated');
+}
+
+async function handleUpdateLineItemSizes(args) {
+  const { id, position, sizes } = args || {};
+  if (!id) throw new Error('`id` is required');
+  if (position == null) throw new Error('`position` is required');
+  if (!sizes || typeof sizes !== 'object' || Object.keys(sizes).length === 0) {
+    throw new Error('`sizes` must be a non-empty object');
+  }
+
+  const input = { position: parseInt(position), sizes: parseSizesToInput(sizes) };
+  const data = await executeQuery(LINE_ITEM_UPDATE_MUTATION, { id, input });
+  return formatMutationResult(data.lineItemUpdate, 'sizes updated');
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -368,6 +539,9 @@ export async function handleToolCall(name, args) {
     case 'get_order_stats': return handleGetOrderStats(args);
     case 'get_production_schedule': return handleGetProductionSchedule(args);
     case 'get_account_info': return handleGetAccountInfo();
+    case 'add_line_item': return handleAddLineItem(args);
+    case 'update_line_item': return handleUpdateLineItem(args);
+    case 'update_line_item_sizes': return handleUpdateLineItemSizes(args);
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }

@@ -7,7 +7,7 @@
  * Uses the low-level Server API so tool inputSchema can be defined as plain JSON Schema
  * objects (no Zod dependency required).
  *
- * READ-ONLY connector. No mutations.
+ * Supports read queries and line item mutations (add, update, update sizes).
  */
 
 import express from 'express';
@@ -163,7 +163,7 @@ app.get('/', (req, res) => {
     endpoint: '/mcp',
     tools: toolNames,
     toolCount: toolNames.length,
-    description: 'Read-only MCP connector for Printavo print shop management.',
+    description: 'MCP connector for Printavo print shop management. Supports queries and line item mutations.',
   });
 });
 

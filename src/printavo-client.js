@@ -1,6 +1,6 @@
 /**
  * Printavo GraphQL API client with built-in rate limiting and retry logic.
- * READ-ONLY — no mutations are supported.
+ * Supports both queries and mutations.
  *
  * Rate limit: 10 req / 5s. We target ≤8 req / 5s for safety headroom.
  */
