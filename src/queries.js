@@ -243,7 +243,7 @@ export const LINE_ITEM_CREATE_MUTATION = `
       sizes { size count }
       lineItemGroup {
         id
-        title
+        position
       }
     }
   }
@@ -271,7 +271,7 @@ export const LINE_ITEM_UPDATE_MUTATION = `
       sizes { size count }
       lineItemGroup {
         id
-        title
+        position
       }
     }
   }

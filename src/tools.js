@@ -471,7 +471,7 @@ function formatMutationResult(item, action) {
   const sizeStr = formatSizes(item.sizes);
   if (sizeStr) lines.push(`Sizes: ${sizeStr}`);
   if (item.lineItemGroup) {
-    lines.push(`Group: ${item.lineItemGroup.title || '(Untitled)'} (ID: ${item.lineItemGroup.id})`);
+    lines.push(`Group ID: ${item.lineItemGroup.id} (Position: ${item.lineItemGroup.position ?? 'N/A'})`);
   }
   return lines.join('\n');
 }
