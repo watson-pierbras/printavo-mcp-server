@@ -246,12 +246,13 @@ async function handleGetInvoiceDetail(args) {
   if (groups.length > 0) {
     lines.push('--- Line Items ---');
     for (const g of groups) {
+      lines.push(`  Group: ${g.id ? `(Group ID: ${g.id})` : '(No Group ID)'}`);
       const imprints = (g.imprints?.nodes || []).map(i => [i.typeOfWork?.name, i.details].filter(Boolean).join(': ')).filter(Boolean).join('; ');
       if (imprints) lines.push(`  Imprint: ${imprints}`);
       for (const li of (g.lineItems?.nodes || [])) {
         const prod = li.product;
         const prodStr = [prod?.itemNumber, prod?.description, prod?.brand, prod?.color].filter(Boolean).join(' / ');
-        lines.push(`  • [${li.category?.name || 'No Category'}] ${li.description || 'N/A'}`);
+        lines.push(`  • [${li.category?.name || 'No Category'}] ${li.description || 'N/A'} (Line Item ID: ${li.id || 'N/A'}, Position: ${li.position ?? 'N/A'})`);
         if (prodStr) lines.push(`    Product: ${prodStr}`);
         if (li.color) lines.push(`    Color: ${li.color}`);
         if (li.itemNumber) lines.push(`    Item #: ${li.itemNumber}`);
