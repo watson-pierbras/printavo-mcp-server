@@ -217,6 +217,44 @@ export const ORDERS_PAGINATED_QUERY = `
 export const RAW_QUERY = null; // handled dynamically in tools.js
 
 // ---------------------------------------------------------------------------
+// Pricing Matrix queries (READ-ONLY)
+// ---------------------------------------------------------------------------
+// Printavo's public GraphQL API does NOT expose cell values (quantity/price/markup)
+// on the PricingMatrixCell type — only column + id. To read actual matrix rates
+// we use the lineItemGroupPricing calculator query, which returns computed prices
+// given (matrix column, type of work, quantity, blank cost). See CALCULATE_PRICE_QUERY.
+
+export const LIST_PRICING_MATRICES_QUERY = `
+  query {
+    account {
+      pricingMatrices(first: 50) {
+        totalNodes
+        nodes {
+          id
+          name
+          typeOfWork { id name }
+          columns { id columnId columnName }
+        }
+      }
+    }
+  }
+`;
+
+// lineItemGroupPricing is a READ-ONLY query (not a mutation) despite taking an input.
+// Printavo built it as a pricing calculator — no invoices, quotes, or records are created.
+// It returns [{ price, defaultMarkupPercentage, description, signature }].
+export const CALCULATE_PRICE_QUERY = `
+  query($input: LineItemGroupPricingInput!) {
+    lineItemGroupPricing(lineItemGroup: $input) {
+      price
+      defaultMarkupPercentage
+      description
+      signature
+    }
+  }
+`;
+
+// ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
 

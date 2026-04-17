@@ -14,6 +14,8 @@ import {
   LIST_STATUSES_QUERY,
   GET_ACCOUNT_INFO_QUERY,
   ORDERS_PAGINATED_QUERY,
+  LIST_PRICING_MATRICES_QUERY,
+  CALCULATE_PRICE_QUERY,
   LINE_ITEM_CREATE_MUTATION,
   LINE_ITEM_UPDATE_MUTATION,
 } from './queries.js';
@@ -123,6 +125,49 @@ export const toolDefinitions = [
     name: 'get_account_info',
     description: 'Read-only. Get basic Printavo account information.',
     inputSchema: { type: 'object', properties: {} },
+  },
+
+  // -------------------------------------------------------------------------
+  // Pricing matrix tools — READ-ONLY
+  // -------------------------------------------------------------------------
+
+  {
+    name: 'list_pricing_matrices',
+    description: 'Read-only. List all pricing matrices configured in the Printavo account. Returns each matrix\u0027s ID, name, type of work (Screen Printing / Embroidery / DTF / Outsource), and columns (color counts for SP, stitch counts for embroidery, etc). Use this to discover which matrix to pass to calculate_matrix_price.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type_of_work: { type: 'string', description: 'Optional filter: "Screen Printing", "Embroidery", "DTF", "Outsource", "Print On Demand" (case-insensitive partial match).' },
+        name_contains: { type: 'string', description: 'Optional filter: only matrices whose name contains this string (case-insensitive).' },
+      },
+    },
+  },
+  {
+    name: 'get_pricing_matrix',
+    description: 'Read-only. Get full details for a specific pricing matrix by ID or name, including all columns. NOTE: Printavo\u0027s API does NOT expose raw cell values (quantity/price). To get actual prices use calculate_matrix_price.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Matrix ID (preferred). Get from list_pricing_matrices.' },
+        name: { type: 'string', description: 'Matrix name (exact or partial, case-insensitive). Used if id not provided.' },
+      },
+    },
+  },
+  {
+    name: 'calculate_matrix_price',
+    description: 'Read-only. Calculate the decoration price for a hypothetical line item using a pricing matrix. This runs Printavo\u0027s lineItemGroupPricing calculator — NO invoices, quotes, or records are created. Returns the per-item print/decoration cost plus the matrix\u0027s default product markup. Supports single- or multi-column calculations (for additional print locations).',
+    inputSchema: {
+      type: 'object',
+      required: ['matrix_column_id', 'quantity'],
+      properties: {
+        matrix_column_id: { type: 'string', description: 'Pricing matrix COLUMN id (the row id inside columns[]). For screen printing this represents a color count (1, 2, 3\u2026); for embroidery a stitch count (7000, 10000\u2026); etc. Get from list_pricing_matrices or get_pricing_matrix.' },
+        additional_column_ids: { type: 'array', items: { type: 'string' }, description: 'Optional. Additional matrix column IDs for additional print locations (e.g. a second color count for a back print). Each becomes another imprint in the calculation.' },
+        type_of_work_id: { type: 'string', description: 'Type of work ID. If omitted, inferred from the matrix. Common: 8749=Screen Printing, 8750=Embroidery, 9035=DTF, 9201=Outsource.' },
+        quantity: { type: 'number', description: 'Number of pieces in the order (total across sizes).' },
+        blank_cost: { type: 'number', description: 'Blank garment cost per item in dollars. Defaults to 0 — Printavo\u0027s calculator returns PRINT COST only here, and product markup is applied separately. Provide blank_cost if you want a full cost picture in the output (we\u0027ll compute Blank × (1 + markup%) + print as a reference line).' },
+        details: { type: 'string', description: 'Imprint details / description (e.g. "Left chest embroidery"). Optional cosmetic.' },
+      },
+    },
   },
 
   // -------------------------------------------------------------------------
@@ -396,6 +441,170 @@ async function handleGetProductionSchedule(args) {
   return lines.join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// Pricing matrix handlers (READ-ONLY)
+// ---------------------------------------------------------------------------
+
+async function handleListPricingMatrices(args) {
+  const { type_of_work, name_contains } = args || {};
+  const data = await executeQuery(LIST_PRICING_MATRICES_QUERY, {});
+  let nodes = data.account?.pricingMatrices?.nodes || [];
+  const totalNodes = data.account?.pricingMatrices?.totalNodes ?? nodes.length;
+
+  if (type_of_work) {
+    const t = type_of_work.toLowerCase();
+    nodes = nodes.filter(m => (m.typeOfWork?.name || '').toLowerCase().includes(t));
+  }
+  if (name_contains) {
+    const n = name_contains.toLowerCase();
+    nodes = nodes.filter(m => (m.name || '').toLowerCase().includes(n));
+  }
+
+  if (nodes.length === 0) return 'No pricing matrices matched the given filters.';
+
+  const lines = [`Found ${nodes.length} pricing matrix(es)${totalNodes && totalNodes !== nodes.length ? ` (of ${totalNodes} total)` : ''}:`, ''];
+  for (const m of nodes) {
+    lines.push(`• ${m.name || 'Unnamed'} (Matrix ID: ${m.id})`);
+    lines.push(`    Type of Work: ${m.typeOfWork?.name || 'N/A'}${m.typeOfWork?.id ? ` (ToW ID: ${m.typeOfWork.id})` : ''}`);
+    const cols = m.columns || [];
+    if (cols.length > 0) {
+      const colList = cols.map(c => `${c.columnName} [Col ID: ${c.id}]`).join(', ');
+      lines.push(`    Columns (${cols.length}): ${colList}`);
+    }
+    lines.push('');
+  }
+  lines.push('Use calculate_matrix_price with a Col ID to compute an actual rate.');
+  return lines.join('\n');
+}
+
+async function handleGetPricingMatrix(args) {
+  const { id, name } = args || {};
+  if (!id && !name) throw new Error('Provide either `id` or `name`');
+
+  const data = await executeQuery(LIST_PRICING_MATRICES_QUERY, {});
+  const nodes = data.account?.pricingMatrices?.nodes || [];
+
+  let match = null;
+  if (id) {
+    match = nodes.find(m => String(m.id) === String(id));
+  } else if (name) {
+    const n = name.toLowerCase();
+    match = nodes.find(m => (m.name || '').toLowerCase() === n)
+         || nodes.find(m => (m.name || '').toLowerCase().includes(n));
+  }
+
+  if (!match) return `No pricing matrix found for ${id ? `id=${id}` : `name="${name}"`}.`;
+
+  const cols = match.columns || [];
+  const lines = [
+    `=== Pricing Matrix: ${match.name} ===`,
+    `Matrix ID: ${match.id}`,
+    `Type of Work: ${match.typeOfWork?.name || 'N/A'}${match.typeOfWork?.id ? ` (ToW ID: ${match.typeOfWork.id})` : ''}`,
+    '',
+    `--- Columns (${cols.length}) ---`,
+  ];
+  for (const c of cols) {
+    lines.push(`• "${c.columnName}" — Col ID: ${c.id} (columnId: ${c.columnId})`);
+  }
+  lines.push('');
+  lines.push('NOTE: Printavo API does not expose cell values (quantity/price) directly.');
+  lines.push('To get actual rates, call calculate_matrix_price with a Col ID + quantity.');
+  return lines.join('\n');
+}
+
+async function handleCalculateMatrixPrice(args) {
+  const {
+    matrix_column_id,
+    additional_column_ids,
+    type_of_work_id,
+    quantity,
+    blank_cost,
+    details,
+  } = args || {};
+  if (!matrix_column_id) throw new Error('`matrix_column_id` is required');
+  const qty = parseInt(quantity);
+  if (!qty || qty < 1) throw new Error('`quantity` must be a positive integer');
+
+  // Resolve typeOfWork: prefer explicit, else look up from the matrix that owns this column
+  let towId = type_of_work_id;
+  let matrixInfo = null;
+  if (!towId) {
+    const listData = await executeQuery(LIST_PRICING_MATRICES_QUERY, {});
+    const matrices = listData.account?.pricingMatrices?.nodes || [];
+    for (const m of matrices) {
+      if ((m.columns || []).some(c => String(c.id) === String(matrix_column_id))) {
+        matrixInfo = m;
+        towId = m.typeOfWork?.id;
+        break;
+      }
+    }
+    if (!towId) {
+      throw new Error(`Could not infer type_of_work_id — no matrix found containing column ${matrix_column_id}. Pass type_of_work_id explicitly.`);
+    }
+  }
+
+  // Build imprints list: primary column plus any additional print locations
+  const imprints = [{
+    pricingMatrixColumn: { id: String(matrix_column_id) },
+    typeOfWork: { id: String(towId) },
+    details: details || 'Primary imprint',
+  }];
+  if (Array.isArray(additional_column_ids)) {
+    for (const colId of additional_column_ids) {
+      if (!colId) continue;
+      imprints.push({
+        pricingMatrixColumn: { id: String(colId) },
+        typeOfWork: { id: String(towId) },
+        details: 'Additional location',
+      });
+    }
+  }
+
+  // Price the line item group. We treat the quantity as a single size_other bucket —
+  // the matrix only cares about total quantity, not the size distribution.
+  const blank = blank_cost != null ? parseFloat(blank_cost) : 0;
+  const input = {
+    position: 1,
+    imprints,
+    lineItems: [{
+      description: 'Pricing calculation (read-only)',
+      itemNumber: 'CALC',
+      sizes: [{ size: 'size_other', count: qty }],
+      position: 1,
+      price: blank,
+    }],
+  };
+
+  const data = await executeQuery(CALCULATE_PRICE_QUERY, { input });
+  const results = data.lineItemGroupPricing || [];
+  const r = results[0];
+  if (!r) return 'Printavo returned no pricing result.';
+
+  const printCost = parseFloat(r.price) || 0;
+  const markupPct = parseFloat(r.defaultMarkupPercentage);
+  const lines = [
+    `=== Matrix Price Calculation ===`,
+    matrixInfo ? `Matrix: ${matrixInfo.name} (${matrixInfo.typeOfWork?.name})` : `Type of Work ID: ${towId}`,
+    `Primary Column: ${matrix_column_id}`,
+  ];
+  if (additional_column_ids?.length) lines.push(`Additional Columns: ${additional_column_ids.join(', ')}`);
+  lines.push(`Quantity: ${qty}`);
+  if (blank > 0) lines.push(`Blank Cost Input: ${formatCurrency(blank)}`);
+  lines.push('');
+  lines.push(`Decoration / Print Cost per item: ${formatCurrency(printCost)}`);
+  if (!isNaN(markupPct)) lines.push(`Default Product Markup: ${markupPct}%`);
+  if (r.description) lines.push(`Calculation: ${r.description}`);
+  if (blank > 0 && !isNaN(markupPct)) {
+    const garmentWithMarkup = blank * (1 + markupPct / 100);
+    const perItemTotal = garmentWithMarkup + printCost;
+    lines.push('');
+    lines.push(`--- Reference Total (Printavo formula) ---`);
+    lines.push(`(${formatCurrency(blank)} blank × ${1 + markupPct/100}) + ${formatCurrency(printCost)} print = ${formatCurrency(perItemTotal)} per item`);
+    lines.push(`Extended (${qty} items): ${formatCurrency(perItemTotal * qty)}`);
+  }
+  return lines.join('\n');
+}
+
 async function handleGetAccountInfo() {
   const data = await executeQuery(GET_ACCOUNT_INFO_QUERY, {});
   const a = data.account;
@@ -540,6 +749,9 @@ export async function handleToolCall(name, args) {
     case 'get_order_stats': return handleGetOrderStats(args);
     case 'get_production_schedule': return handleGetProductionSchedule(args);
     case 'get_account_info': return handleGetAccountInfo();
+    case 'list_pricing_matrices': return handleListPricingMatrices(args);
+    case 'get_pricing_matrix': return handleGetPricingMatrix(args);
+    case 'calculate_matrix_price': return handleCalculateMatrixPrice(args);
     case 'add_line_item': return handleAddLineItem(args);
     case 'update_line_item': return handleUpdateLineItem(args);
     case 'update_line_item_sizes': return handleUpdateLineItemSizes(args);
